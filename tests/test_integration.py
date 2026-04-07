@@ -398,3 +398,159 @@ def test_str_output_is_readable_with_real_reasoning():
     # Should not raise and should be printable
     assert isinstance(s, str)
     assert len(s) > 0
+
+
+# ---------------------------------------------------------------------------
+# context_recall with real LLM
+# ---------------------------------------------------------------------------
+
+@requires_groq
+def test_context_recall_returns_valid_score():
+    """context_recall should produce a parseable score in [0, 1]."""
+    from ragcheck import evaluate
+
+    llm_fn = make_groq_llm_fn()
+    result = evaluate(
+        question="What is photosynthesis?",
+        answer="Photosynthesis is the process by which plants convert sunlight into food.",
+        contexts=["Plants use sunlight, water, and carbon dioxide to produce glucose and oxygen through photosynthesis."],
+        llm_fn=llm_fn,
+        include_context_recall=True,
+    )
+
+    assert result.context_recall is not None
+    assert 0.0 <= result.context_recall <= 1.0
+    assert isinstance(result.reasoning.get("context_recall"), str)
+    assert result.parse_errors == [], f"Parse errors: {result.parse_errors}"
+
+
+@requires_groq
+def test_context_recall_high_for_complete_context():
+    """Context that fully covers the answer should score high on recall."""
+    from ragcheck import evaluate
+
+    llm_fn = make_groq_llm_fn()
+    result = evaluate(
+        question="What is the boiling point of water?",
+        answer="Water boils at 100 degrees Celsius.",
+        contexts=["Water boils at 100°C (212°F) at standard atmospheric pressure."],
+        llm_fn=llm_fn,
+        include_context_recall=True,
+    )
+
+    assert result.context_recall >= 0.7, (
+        f"Expected context_recall >= 0.7, got {result.context_recall:.2f}. "
+        f"Reasoning: {result.reasoning.get('context_recall')}"
+    )
+
+
+@requires_groq
+def test_context_recall_low_for_missing_context():
+    """Context that doesn't contain the answer should score low on recall."""
+    from ragcheck import evaluate
+
+    llm_fn = make_groq_llm_fn()
+    result = evaluate(
+        question="What is the speed of light?",
+        answer="The speed of light is 299,792,458 metres per second.",
+        contexts=[
+            "The Amazon river is the largest river by discharge.",
+            "Paris is the capital of France.",
+        ],
+        llm_fn=llm_fn,
+        include_context_recall=True,
+    )
+
+    assert result.context_recall <= 0.4, (
+        f"Expected context_recall <= 0.4, got {result.context_recall:.2f}. "
+        f"Reasoning: {result.reasoning.get('context_recall')}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# extra_metrics with real LLM
+# ---------------------------------------------------------------------------
+
+@requires_groq
+def test_custom_metric_returns_valid_score():
+    """A user-defined prompt function should produce a parseable score."""
+    from ragcheck import evaluate
+
+    def conciseness_prompt(question: str, answer: str, contexts: list) -> str:
+        return (
+            f"Rate how concise this answer is (1.0 = very concise, 0.0 = very verbose).\n\n"
+            f"Answer: {answer}\n\n"
+            f'Respond ONLY with valid JSON: {{"score": <float 0-1>, "reasoning": "<one sentence>"}}'
+        )
+
+    llm_fn = make_groq_llm_fn()
+    result = evaluate(
+        question="What is the capital of France?",
+        answer="Paris.",
+        contexts=["Paris is the capital of France."],
+        llm_fn=llm_fn,
+        extra_metrics={"conciseness": conciseness_prompt},
+    )
+
+    assert "conciseness" in result.extra_metrics
+    assert 0.0 <= result.extra_metrics["conciseness"] <= 1.0
+    assert isinstance(result.reasoning.get("conciseness"), str)
+    assert result.parse_errors == [], f"Parse errors: {result.parse_errors}"
+
+
+# ---------------------------------------------------------------------------
+# to_dict() / to_json() with real LLM output
+# ---------------------------------------------------------------------------
+
+@requires_groq
+def test_to_json_round_trips_with_real_reasoning():
+    """to_json() should produce valid JSON even with real LLM-generated reasoning strings."""
+    import json as _json
+    from ragcheck import evaluate
+
+    llm_fn = make_groq_llm_fn()
+    result = evaluate(
+        question="What is the capital of France?",
+        answer="Paris is the capital of France.",
+        contexts=["Paris is the capital and largest city of France."],
+        llm_fn=llm_fn,
+    )
+
+    raw = result.to_json()
+    parsed = _json.loads(raw)
+    assert parsed["faithfulness"] == result.faithfulness
+    assert parsed["answer_relevance"] == result.answer_relevance
+    assert isinstance(parsed["reasoning"]["faithfulness"], str)
+
+
+# ---------------------------------------------------------------------------
+# evaluate_batch with real LLM
+# ---------------------------------------------------------------------------
+
+@requires_groq
+def test_evaluate_batch_real_llm():
+    """evaluate_batch should return one EvalResult per item, all with valid scores."""
+    from ragcheck import evaluate_batch
+
+    llm_fn = make_groq_llm_fn()
+    batch = [
+        {
+            "question": "What is the capital of France?",
+            "answer": "Paris is the capital of France.",
+            "contexts": ["Paris is the capital and largest city of France."],
+        },
+        {
+            "question": "What year did World War II end?",
+            "answer": "World War II ended in 1945.",
+            "contexts": ["World War II ended in 1945 with the surrender of Germany and Japan."],
+        },
+    ]
+
+    results = evaluate_batch(batch, llm_fn)
+
+    assert len(results) == 2
+    for r in results:
+        assert 0.0 <= r.faithfulness <= 1.0
+        assert 0.0 <= r.answer_relevance <= 1.0
+        assert 0.0 <= r.context_precision <= 1.0
+        assert r.parse_errors == [], f"Unexpected parse errors: {r.parse_errors}"

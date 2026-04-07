@@ -38,6 +38,9 @@ print(result)
 # boolean gate — useful in CI
 if not result.passed(threshold=0.7):
     raise ValueError("RAG quality below threshold")
+
+# export to JSON for logging or dashboards
+print(result.to_json(indent=2))
 ```
 
 ---
@@ -49,12 +52,78 @@ if not result.passed(threshold=0.7):
 | `faithfulness` | Is every claim in the answer grounded in the context? | Hallucination |
 | `answer_relevance` | Does the answer actually address the question? | Off-topic response |
 | `context_precision` | Was the retrieved context useful? | Bad retrieval |
+| `context_recall` *(optional)* | Does the context contain enough to produce the answer? | Incomplete retrieval |
 
 All scores are `float` from 0.0 to 1.0. `EvalResult.reasoning` gives a one-sentence explanation per metric.
 
-`EvalResult.parse_errors` is a list of error strings for any metric where the LLM response couldn't be parsed. A score of `0.0` with a parse error means the response was unreadable — not that the answer was actually bad. Empty list means all metrics parsed cleanly.
+`EvalResult.parse_errors` is a list of error strings for any metric where the LLM response couldn't be parsed. A score of `0.0` with a parse error means the response was unreadable — not that the answer was actually bad.
 
-`EvalResult.passed(threshold=0.7)` returns `True` if all three scores meet the threshold — a one-liner CI gate.
+`EvalResult.passed(threshold=0.7)` returns `True` if **all** scored metrics meet the threshold — a one-liner CI gate.
+
+---
+
+## Optional: context_recall
+
+```python
+result = ragcheck.evaluate(
+    question="...", answer="...", contexts=[...], llm_fn=llm_fn,
+    include_context_recall=True,  # adds one extra LLM call
+)
+print(result.context_recall)  # float 0–1
+```
+
+---
+
+## Custom Metrics
+
+Extend ragcheck with your own domain-specific evaluations without forking the library:
+
+```python
+def conciseness_prompt(question: str, answer: str, contexts: list) -> str:
+    return (
+        f"Rate how concise this answer is (1.0 = very concise, 0.0 = very verbose).\n\n"
+        f"Answer: {answer}\n\n"
+        f'Respond ONLY with valid JSON: {{"score": <float 0-1>, "reasoning": "<one sentence>"}}'
+    )
+
+result = ragcheck.evaluate(
+    question="...", answer="...", contexts=[...], llm_fn=llm_fn,
+    extra_metrics={"conciseness": conciseness_prompt},
+)
+print(result.extra_metrics["conciseness"])  # float 0–1
+print(result.reasoning["conciseness"])      # one-sentence explanation
+```
+
+Custom metrics are included in `passed()`, `to_dict()`, and `to_json()` automatically.
+
+---
+
+## Batch Evaluation
+
+```python
+results = ragcheck.evaluate_batch(
+    items=[
+        {"question": "...", "answer": "...", "contexts": [...]},
+        {"question": "...", "answer": "...", "contexts": [...]},
+    ],
+    llm_fn=llm_fn,
+)
+
+# filter for passing responses
+passing = [r for r in results if r.passed(threshold=0.7)]
+```
+
+---
+
+## Export
+
+```python
+# dict — pipe into logging, databases, dashboards
+d = result.to_dict()
+
+# JSON string — write to file, send over HTTP
+json_str = result.to_json(indent=2)
+```
 
 ---
 
@@ -119,6 +188,8 @@ def llm_fn(prompt: str) -> str:
 | Mandatory dependencies | None | Several |
 | LLM flexibility | Any callable | OpenAI-first |
 | Install | `pip install ragcheck` | Framework adoption |
+| Custom metrics | Yes — pass a prompt function | Subclass-based |
+| Batch evaluation | `evaluate_batch()` | Built-in dataset support |
 | API surface | One function | Full framework |
 
 RAGAS is a gym membership. ragcheck is a pushup.

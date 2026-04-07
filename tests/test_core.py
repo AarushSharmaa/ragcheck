@@ -3,7 +3,7 @@ from unittest.mock import Mock
 
 import pytest
 
-from ragcheck import EvalResult, evaluate
+from ragcheck import EvalResult, evaluate, evaluate_batch
 
 
 def make_mock_llm(score: float, reasoning: str = "ok"):
@@ -306,3 +306,284 @@ def test_single_context():
 def test_empty_contexts_does_not_raise():
     result = evaluate(QUESTION, ANSWER, [], make_mock_llm(0.5))
     assert isinstance(result, EvalResult)
+
+
+# ---------------------------------------------------------------------------
+# context_recall (optional metric)
+# ---------------------------------------------------------------------------
+
+def test_context_recall_absent_by_default():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.9))
+    assert result.context_recall is None
+    assert "context_recall" not in result.reasoning
+
+
+def test_context_recall_present_when_requested():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8), include_context_recall=True)
+    assert result.context_recall == 0.8
+    assert "context_recall" in result.reasoning
+
+
+def test_context_recall_calls_llm_four_times():
+    mock = Mock(return_value=json.dumps({"score": 0.7, "reasoning": "ok"}))
+    evaluate(QUESTION, ANSWER, CONTEXTS, mock, include_context_recall=True)
+    assert mock.call_count == 4
+
+
+def test_context_recall_included_in_passed():
+    """passed() must gate on context_recall when it is present."""
+    call_count = 0
+    def mixed_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        # First 3 calls: core metrics at 0.9; 4th call: recall at 0.3
+        score = 0.9 if call_count < 4 else 0.3
+        return json.dumps({"score": score, "reasoning": "ok"})
+
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, mixed_llm, include_context_recall=True)
+    assert result.context_recall == 0.3
+    assert result.passed(threshold=0.7) is False  # recall drags it down
+
+
+def test_context_recall_parse_error_recorded():
+    call_count = 0
+    def mixed_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 4:
+            return "not json"
+        return json.dumps({"score": 0.8, "reasoning": "ok"})
+
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, mixed_llm, include_context_recall=True)
+    assert result.context_recall == 0.0
+    assert len(result.parse_errors) == 1
+
+
+# ---------------------------------------------------------------------------
+# extra_metrics (custom metrics)
+# ---------------------------------------------------------------------------
+
+def test_extra_metric_score_returned():
+    def conciseness_prompt(q, a, c):
+        return f"Rate conciseness of: {a}"
+
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.75),
+        extra_metrics={"conciseness": conciseness_prompt},
+    )
+    assert result.extra_metrics["conciseness"] == 0.75
+
+
+def test_extra_metric_reasoning_returned():
+    def my_prompt(q, a, c):
+        return "some prompt"
+
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.6, "brief and clear"),
+        extra_metrics={"conciseness": my_prompt},
+    )
+    assert result.reasoning["conciseness"] == "brief and clear"
+
+
+def test_extra_metric_included_in_passed():
+    call_count = 0
+    def mixed_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        score = 0.9 if call_count <= 3 else 0.2
+        return json.dumps({"score": score, "reasoning": "ok"})
+
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, mixed_llm,
+        extra_metrics={"conciseness": lambda q, a, c: "rate this"},
+    )
+    assert result.extra_metrics["conciseness"] == 0.2
+    assert result.passed(threshold=0.7) is False
+
+
+def test_multiple_extra_metrics():
+    mock = Mock(return_value=json.dumps({"score": 0.8, "reasoning": "ok"}))
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, mock,
+        extra_metrics={
+            "conciseness": lambda q, a, c: "prompt1",
+            "tone": lambda q, a, c: "prompt2",
+        },
+    )
+    assert "conciseness" in result.extra_metrics
+    assert "tone" in result.extra_metrics
+    assert mock.call_count == 5  # 3 core + 2 extra
+
+
+def test_no_extra_metrics_by_default():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.9))
+    assert result.extra_metrics == {}
+
+
+def test_extra_metric_parse_error_recorded():
+    call_count = 0
+    def mixed_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 4:
+            return "not json"
+        return json.dumps({"score": 0.8, "reasoning": "ok"})
+
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, mixed_llm,
+        extra_metrics={"bad_metric": lambda q, a, c: "prompt"},
+    )
+    assert len(result.parse_errors) == 1
+    assert result.extra_metrics["bad_metric"] == 0.0
+
+
+# ---------------------------------------------------------------------------
+# EvalResult.to_dict() and to_json()
+# ---------------------------------------------------------------------------
+
+def test_to_dict_contains_core_fields():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8, "ok"))
+    d = result.to_dict()
+    assert "faithfulness" in d
+    assert "answer_relevance" in d
+    assert "context_precision" in d
+    assert "reasoning" in d
+    assert "parse_errors" in d
+
+
+def test_to_dict_excludes_context_recall_when_absent():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8))
+    assert "context_recall" not in result.to_dict()
+
+
+def test_to_dict_includes_context_recall_when_present():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8), include_context_recall=True)
+    assert "context_recall" in result.to_dict()
+    assert result.to_dict()["context_recall"] == 0.8
+
+
+def test_to_dict_excludes_extra_metrics_when_empty():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.9))
+    assert "extra_metrics" not in result.to_dict()
+
+
+def test_to_dict_includes_extra_metrics_when_present():
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.9),
+        extra_metrics={"conciseness": lambda q, a, c: "p"},
+    )
+    assert result.to_dict()["extra_metrics"]["conciseness"] == 0.9
+
+
+def test_to_json_is_valid_json():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.7))
+    raw = result.to_json()
+    parsed = json.loads(raw)
+    assert parsed["faithfulness"] == 0.7
+
+
+def test_to_json_kwargs_forwarded():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.7))
+    raw = result.to_json(indent=2)
+    assert "\n" in raw  # indented output has newlines
+
+
+def test_to_dict_scores_match_result_fields():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.65))
+    d = result.to_dict()
+    assert d["faithfulness"] == result.faithfulness
+    assert d["answer_relevance"] == result.answer_relevance
+    assert d["context_precision"] == result.context_precision
+
+
+# ---------------------------------------------------------------------------
+# evaluate_batch()
+# ---------------------------------------------------------------------------
+
+BATCH = [
+    {"question": "What is the capital of France?", "answer": "Paris.", "contexts": ["Paris is the capital."]},
+    {"question": "What is 2+2?", "answer": "4.", "contexts": ["Basic arithmetic."]},
+    {"question": "Who wrote Hamlet?", "answer": "Shakespeare.", "contexts": ["Shakespeare wrote Hamlet."]},
+]
+
+
+def test_evaluate_batch_returns_list_of_evalresults():
+    results = evaluate_batch(BATCH, make_mock_llm(0.8))
+    assert isinstance(results, list)
+    assert len(results) == 3
+    assert all(isinstance(r, EvalResult) for r in results)
+
+
+def test_evaluate_batch_preserves_order():
+    """Results should correspond to items in the same order."""
+    scores = [0.9, 0.5, 0.7]
+    idx = 0
+    def ordered_llm(prompt: str) -> str:
+        nonlocal idx
+        score = scores[idx // 3]
+        idx += 1
+        return json.dumps({"score": score, "reasoning": "ok"})
+
+    results = evaluate_batch(BATCH, ordered_llm)
+    assert results[0].faithfulness == 0.9
+    assert results[1].faithfulness == 0.5
+    assert results[2].faithfulness == 0.7
+
+
+def test_evaluate_batch_empty_list():
+    results = evaluate_batch([], make_mock_llm(0.8))
+    assert results == []
+
+
+def test_evaluate_batch_kwargs_forwarded():
+    """include_context_recall should be forwarded to each evaluate() call."""
+    mock = Mock(return_value=json.dumps({"score": 0.7, "reasoning": "ok"}))
+    results = evaluate_batch(BATCH, mock, include_context_recall=True)
+    assert all(r.context_recall is not None for r in results)
+    # 3 items × 4 calls each (3 core + 1 recall) = 12
+    assert mock.call_count == 12
+
+
+def test_evaluate_batch_filter_passing():
+    """Typical usage: filter batch results for those that pass."""
+    call_count = 0
+    def mixed_llm(prompt: str) -> str:
+        nonlocal call_count
+        call_count += 1
+        # Item 1 (calls 1-3): 0.9, Item 2 (calls 4-6): 0.4, Item 3 (calls 7-9): 0.9
+        score = 0.4 if 4 <= call_count <= 6 else 0.9
+        return json.dumps({"score": score, "reasoning": "ok"})
+
+    results = evaluate_batch(BATCH, mixed_llm)
+    passing = [r for r in results if r.passed(threshold=0.7)]
+    assert len(passing) == 2
+
+
+def test_evaluate_batch_propagates_llm_exception():
+    def failing_llm(prompt: str) -> str:
+        raise RuntimeError("API down")
+
+    with pytest.raises(RuntimeError, match="API down"):
+        evaluate_batch(BATCH, failing_llm)
+
+
+# ---------------------------------------------------------------------------
+# __str__ with new fields
+# ---------------------------------------------------------------------------
+
+def test_str_includes_context_recall_when_present():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8), include_context_recall=True)
+    assert "context_recall" in str(result)
+
+
+def test_str_excludes_context_recall_when_absent():
+    result = evaluate(QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.8))
+    assert "context_recall" not in str(result)
+
+
+def test_str_includes_extra_metrics():
+    result = evaluate(
+        QUESTION, ANSWER, CONTEXTS, make_mock_llm(0.9),
+        extra_metrics={"conciseness": lambda q, a, c: "p"},
+    )
+    assert "conciseness" in str(result)
