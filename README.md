@@ -26,10 +26,10 @@ result = ragcheck.evaluate(
     llm_fn=lambda prompt: your_llm.generate(prompt),
 )
 
-print(result.faithfulness)       # 0.95
-print(result.answer_relevance)   # 0.90
-print(result.context_precision)  # 0.88
-print(result.reasoning)          # {"faithfulness": "...", ...}
+print(result.faithfulness)       # float 0–1
+print(result.answer_relevance)   # float 0–1
+print(result.context_precision)  # float 0–1
+print(result.reasoning)          # {"faithfulness": "...", "answer_relevance": "...", "context_precision": "..."}
 ```
 
 ---
