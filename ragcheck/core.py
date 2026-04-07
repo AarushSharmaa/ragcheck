@@ -29,7 +29,9 @@ def _parse_llm_json(response: str) -> tuple[float, str]:
         return score, reasoning
 
     try:
-        return extract(json.loads(response.strip()))
+        parsed = json.loads(response.strip())
+        if isinstance(parsed, dict):
+            return extract(parsed)
     except (json.JSONDecodeError, ValueError, TypeError):
         pass
 
