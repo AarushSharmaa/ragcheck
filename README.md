@@ -186,6 +186,67 @@ def llm_fn(prompt: str) -> str:
 
 ---
 
+## Dev loop: compare + cache + baseline
+
+Use ragcheck as quality infrastructure, not just a one-off checker.
+
+```python
+import ragcheck
+
+# 1. Wrap your LLM with a cache — repeated CI runs are free
+cached_llm = ragcheck.make_cached_llm(llm_fn, cache=":memory:")         # in-process
+# or: ragcheck.make_cached_llm(llm_fn, cache="ragcheck.cache.db")       # persists across runs
+
+# 2. Evaluate and save a quality baseline
+result = ragcheck.evaluate(question, answer, contexts, cached_llm, model="gpt-4o-mini")
+result.save_baseline("baseline.json")
+
+# 3. After a change (new prompt, model swap, retrieval tweak) — compare
+new_result = ragcheck.evaluate(question, new_answer, contexts, cached_llm)
+diff = ragcheck.compare([result], [new_result])
+print(diff)
+# Top regressions:
+#   Q1: faithfulness 0.90 → 0.45  (Δ-0.45)
+# Net delta: faithfulness -0.45  answer_relevance +0.02  context_precision -0.01
+
+# 4. Block CI on quality drops — same mental model as jest snapshots
+ragcheck.assert_no_regression("baseline.json", new_result, tolerance=0.05)
+# raises AssertionError with metric name if any score drops > 0.05
+```
+
+---
+
+## Understand failures
+
+ragcheck tells you what went wrong, not just what the score was.
+
+```python
+result = ragcheck.evaluate(question, answer, contexts, llm_fn)
+
+# Human-readable failure labels — no extra LLM calls
+print(result.failure_modes)   # ["hallucination", "retrieval_miss"]
+
+# Know what your eval suite costs per CI run
+result = ragcheck.evaluate(..., model="gpt-4o-mini")
+print(result.tokens_used)          # int
+print(result.estimated_cost_usd)   # float
+
+# Paste into a GitHub PR description
+print(result.to_markdown())
+
+# Track quality trends over time
+history = ragcheck.History("ragcheck.db")
+history.log(results, label="after-prompt-v3")
+history.trend("faithfulness", days=30)   # [(timestamp, avg_score), ...]
+history.regressions(since="2026-04-01") # runs where scores dropped
+history.summary()                        # {metric: latest_avg}
+
+# Async evaluation for large test suites
+results = await ragcheck.aevaluate_batch(items, llm_fn, concurrency=5)
+```
+
+---
+
 ## Compared to RAGAS
 
 | | ragcheck | RAGAS |

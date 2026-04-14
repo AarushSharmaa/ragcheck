@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "ragcheck"
-version = "0.2.0"
-description = "Lightweight, reference-free RAG evaluation. No ground truth needed."
+version = "1.0.0"
+description = "Lightweight RAG evaluation with failure mode labels, cost tracking, caching, and SQLite history. No ground truth needed."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { file = "LICENSE" }
