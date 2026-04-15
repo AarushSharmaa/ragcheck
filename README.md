@@ -319,7 +319,7 @@ All kwargs supported by `evaluate()` work here too (e.g. `include_context_recall
 
 evalops uses LLM-as-a-judge: a capable language model evaluates outputs along dimensions that are too nuanced to specify as rules. Instead of matching strings or requiring labeled ground truth, the judge asks whether claims are grounded, whether the answer addresses the question, and whether the retrieved context was useful.
 
-This approach is backed by research. Zheng et al. (2023) showed LLM judges achieve over 80% agreement with human evaluators on open-ended tasks, comparable to human-human agreement. The RAGAS paper (Es et al., 2023) extended this to RAG-specific metrics.
+This approach is backed by research. [Zheng et al. (2023)](https://arxiv.org/abs/2306.05685) showed LLM judges achieve over 80% agreement with human evaluators on open-ended tasks, comparable to human-human agreement. The [RAGAS paper (Es et al., 2023)](https://arxiv.org/abs/2309.15217) extended this to RAG-specific metrics.
 
 One practical benefit: as you upgrade the judge model, your evaluations get sharper without any changes to your eval suite. Better judge, better signal, same code.
 
