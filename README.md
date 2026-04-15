@@ -333,7 +333,7 @@ This is my first open-source contribution, and it comes from a practical place. 
 
 The core idea is simple: teams should be able to start evaluating today - not after a signup, not after adopting a framework, not after configuring a dashboard. `pip install evalsystem`, write a test, ship. If eval has friction, people skip it. And when people skip eval, bad outputs reach users.
 
-There is a growing idea in the LLM community called Eval Driven Development - write an eval before you change a prompt, the same way you'd write a test before you change a function. evalops is my attempt to make that practical: low friction, no setup, just a function call and a quality gate.
+There is a growing idea in the LLM community called [Eval Driven Development](https://vadim.blog/eval-driven-development) - write an eval before you change a prompt, the same way you'd write a test before you change a function. evalops is my attempt to make that practical: low friction, no setup, just a function call and a quality gate.
 
 It is a work in progress. If something is unclear, missing, or broken for your use case, please open an issue. Feedback is genuinely welcome.
 
