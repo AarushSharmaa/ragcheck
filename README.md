@@ -2,6 +2,10 @@
 
 LLM output evaluation for teams that ship. Failure modes, regression gates, cost tracking, and quality history. No ground truth required, no framework lock-in.
 
+[![PyPI](https://img.shields.io/pypi/v/evalsystem.svg)](https://pypi.org/project/evalsystem/)
+[![Python](https://img.shields.io/pypi/pyversions/evalsystem.svg)](https://pypi.org/project/evalsystem/)
+[![License: MIT](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 > *Because "it seemed fine in testing" is not an ops strategy.*
 
 ```
@@ -312,6 +316,22 @@ All kwargs supported by `evaluate()` work here too (e.g. `include_context_recall
 | Custom metrics | Pass a prompt function | Subclass-based |
 | Batch evaluation | `evaluate_batch()` | Built-in dataset support |
 | Install | `pip install evalops` | Framework adoption |
+
+---
+
+## Design decisions
+
+A few choices that define what evalops is and isn't.
+
+**The LLM contract never changes.** One signature: `Callable[[str], str]`. No provider SDKs, no config classes, no auth wrappers. If you can call your LLM, you can use evalops. OpenAI, Anthropic, Gemini, Ollama, or a mock in a unit test all work without a single provider-specific line in the library.
+
+**Zero mandatory dependencies.** The core is standard library only. `pip install evalsystem` adds nothing to your environment except evalops itself.
+
+**Parse errors never raise.** When a judge LLM returns something unparseable, evalops records the error in `result.parse_errors` and returns a score of `0.0`. A silent crash in CI is worse than a visible zero with a traceable error string. You always get a result object.
+
+**New parameters are keyword-only.** Every addition to `evaluate()` sits after `*`, so existing call sites never break when the library grows.
+
+**Score clamping happens in one place.** Every score passes through the same parser. No defensive clamping scattered across call sites.
 
 ---
 
