@@ -13,7 +13,7 @@ Work in progress toward the next release. See the `dev` branch.
 
 ---
 
-## [1.0.0] — 2026-04-15 — not yet released to PyPI
+## [1.0.0] — 2026-04-15
 
 The first production-ready release. evalops graduates from a one-off eval function
 into infrastructure for eval-driven development: regression gates, cost tracking,
